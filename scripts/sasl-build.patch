@@ -22,7 +22,11 @@ index bb60f03..19a5520 100755
  BUILD_DIR="$tmpdir/build"
  INSTALL_PATH="${BUILD_DIR}/${LIB_NAME}/universal"
  BITCODE_FLAGS="-fembed-bitcode"
-@@ -184,13 +184,13 @@ for TARGET in $TARGETS; do
+@@ -181,16 +181,16 @@ for TARGET in $TARGETS; do
+-    SDK_ID="$(echo "$TARGET$SDK_IOS_VERSION" | tr A-Z a-z)"	
++    SDK_ID="$(echo "$TARGET$SDK_IOS_VERSION" | tr '[:upper:]' '[:lower:]')"	
+     SYSROOT="$(xcodebuild -version -sdk "$SDK_ID" 2>/dev/null | egrep '^Path: ' | cut -d ' ' -f 2)"
+
      case $TARGET in
          (iPhoneOS)
              ARCH=arm
