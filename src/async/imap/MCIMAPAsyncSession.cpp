@@ -78,6 +78,7 @@ IMAPAsyncSession::IMAPAsyncSession()
     mGmailUserDisplayName = NULL;
     mQueueRunning = false;
     mIdleEnabled = false;
+    pthread_mutex_init(&mSessionsLock, NULL);
 }
 
 IMAPAsyncSession::~IMAPAsyncSession()
@@ -96,6 +97,7 @@ IMAPAsyncSession::~IMAPAsyncSession()
     MC_SAFE_RELEASE(mPassword);
     MC_SAFE_RELEASE(mOAuth2Token);
     MC_SAFE_RELEASE(mDefaultNamespace);
+    pthread_mutex_destroy(&mSessionsLock);
 }
 
 void IMAPAsyncSession::setHostname(String * hostname)
@@ -286,8 +288,10 @@ IMAPAsyncConnection * IMAPAsyncSession::session()
 
 IMAPAsyncConnection * IMAPAsyncSession::sessionForFolder(String * folder, bool urgent)
 {
+    pthread_mutex_lock(&mSessionsLock);
+    IMAPAsyncConnection * result = NULL;
     if (folder == NULL) {
-        return matchingSessionForFolder(NULL);
+        result = matchingSessionForFolder(NULL);
     }
     else {
         IMAPAsyncConnection * s = NULL;
@@ -296,24 +300,28 @@ IMAPAsyncConnection * IMAPAsyncSession::sessionForFolder(String * folder, bool u
         s = sessionWithMinQueue(true, folder);
         if (s != NULL && s->operationsCount() == 0) {
             s->setLastFolder(folder);
-            return s;
+            result = s;
         }
-
-        if (urgent && mAllowsFolderConcurrentAccessEnabled) {
-            // in urgent mode try reuse any available session with
-            // empty queue or create new one, if maximum connections limit does not reached.
-            s = availableSession();
-            if (s->operationsCount() == 0) {
+        else {
+            if (urgent && mAllowsFolderConcurrentAccessEnabled) {
+                // in urgent mode try reuse any available session with
+                // empty queue or create new one, if maximum connections limit does not reached.
+                s = availableSession();
+                if (s->operationsCount() == 0) {
+                    s->setLastFolder(folder);
+                    result = s;
+                }
+            }
+            if (result == NULL) {
+                // otherwise returns session with minimum size of queue among selected to the folder.
+                s = matchingSessionForFolder(folder);
                 s->setLastFolder(folder);
-                return s;
+                result = s;
             }
         }
-
-        // otherwise returns session with minimum size of queue among selected to the folder.
-        s = matchingSessionForFolder(folder);
-        s->setLastFolder(folder);
-        return s;
     }
+    pthread_mutex_unlock(&mSessionsLock);
+    return result;
 }
 
 IMAPAsyncConnection * IMAPAsyncSession::availableSession()
@@ -820,20 +828,24 @@ IMAPOperation * IMAPAsyncSession::disconnectOperation()
 {
     IMAPMultiDisconnectOperation * op = new IMAPMultiDisconnectOperation();
     op->autorelease();
+    pthread_mutex_lock(&mSessionsLock);
     for(unsigned int i = 0 ; i < mSessions->count() ; i ++) {
         IMAPAsyncConnection * currentSession = (IMAPAsyncConnection *) mSessions->objectAtIndex(i);
         op->addOperation(currentSession->disconnectOperation());
     }
+    pthread_mutex_unlock(&mSessionsLock);
     return op;
 }
 
 void IMAPAsyncSession::setConnectionLogger(ConnectionLogger * logger)
 {
+    pthread_mutex_lock(&mSessionsLock);
     mConnectionLogger = logger;
     for(unsigned int i = 0 ; i < mSessions->count() ; i ++) {
         IMAPAsyncConnection * currentSession = (IMAPAsyncConnection *) mSessions->objectAtIndex(i);
         currentSession->setConnectionLogger(logger);
     }
+    pthread_mutex_unlock(&mSessionsLock);
 }
 
 ConnectionLogger * IMAPAsyncSession::connectionLogger()
@@ -907,14 +919,17 @@ bool IMAPAsyncSession::isOperationQueueRunning()
 
 void IMAPAsyncSession::cancelAllOperations()
 {
+    pthread_mutex_lock(&mSessionsLock);
     for(unsigned int i = 0 ; i < mSessions->count() ; i ++) {
         IMAPAsyncConnection * currentSession = (IMAPAsyncConnection *) mSessions->objectAtIndex(i);
         currentSession->cancelAllOperations();
     }
+    pthread_mutex_unlock(&mSessionsLock);
 }
 
 void IMAPAsyncSession::operationRunningStateChanged()
 {
+    pthread_mutex_lock(&mSessionsLock);
     bool isRunning = false;
     for(unsigned int i = 0 ; i < mSessions->count() ; i ++) {
         IMAPAsyncConnection * currentSession = (IMAPAsyncConnection *) mSessions->objectAtIndex(i);
@@ -923,6 +938,7 @@ void IMAPAsyncSession::operationRunningStateChanged()
             break;
         }
     }
+    pthread_mutex_unlock(&mSessionsLock);
     if (mQueueRunning == isRunning) {
         return;
     }

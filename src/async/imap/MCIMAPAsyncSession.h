@@ -13,6 +13,8 @@
 #include <MailCore/MCBaseTypes.h>
 #include <MailCore/MCMessageConstants.h>
 
+#include <pthread.h>
+
 #ifdef __cplusplus
 
 namespace mailcore {
@@ -194,6 +196,7 @@ namespace mailcore {
         virtual IMAPAsyncConnection * sessionForFolder(String * folder, bool urgent = false);
         
     private:
+        pthread_mutex_t mSessionsLock;
         Array * mSessions;
         
         String * mHostname;
