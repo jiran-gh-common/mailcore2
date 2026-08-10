@@ -230,13 +230,16 @@ void OperationQueue::stoppedOnMainThread(void * context)
 {
     MCLog("thread stopped %p", this);
     mailsem_down(mStopSem);
+    pthread_mutex_lock(&mLock);
     mStarted = false;
-    
+    bool hasPendingOperations = (mOperations->count() > 0);
+    pthread_mutex_unlock(&mLock);
+
     if (mCallback) {
         mCallback->queueStoppedRunning();
     }
-    
-    if (mOperations->count() > 0) {
+
+    if (hasPendingOperations) {
         //Operations have been added while thread was quitting, so restart automatically
         startThread();
     }
@@ -248,16 +251,22 @@ void OperationQueue::stoppedOnMainThread(void * context)
 
 void OperationQueue::startThread()
 {
-    if (mStarted)
+    // mStarted 를 mLock 없이 검사하면 동시 addOperation 시 worker thread 가 2개 떠서
+    // 같은 IMAPSession 에 동시 접근하게 된다 (setup assert / stream use-after-free).
+    pthread_mutex_lock(&mLock);
+    if (mStarted) {
+        pthread_mutex_unlock(&mLock);
         return;
-    
-    if (mCallback) {
-        mCallback->queueStartRunning();
     }
-    
     retain(); // (3)
     mQuitting = false;
     mStarted = true;
+    pthread_mutex_unlock(&mLock);
+
+    if (mCallback) {
+        mCallback->queueStartRunning();
+    }
+
     pthread_create(&mThreadID, NULL, (void * (*)(void *)) OperationQueue::runOperationsOnThread, this);
     pthread_detach(mThreadID);
     mailsem_down(mStartSem);
